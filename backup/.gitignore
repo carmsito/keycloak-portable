@@ -3,3 +3,4 @@
 last_backup.txt
 seed/.last_seed_sync.txt
 !seed/keycloak_seed.sql.gz
+start-project.ps1
