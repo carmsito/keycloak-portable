@@ -1,7 +1,7 @@
-services:
+﻿services:
   db:
     image: postgres:16
-    container_name: keycloak-db
+    container_name: keycloak-db-extranet
     environment:
       POSTGRES_DB: keycloak
       POSTGRES_USER: keycloak
@@ -18,8 +18,10 @@ services:
 
   keycloak:
     image: quay.io/keycloak/keycloak:25.0
-    container_name: keycloak-local
-    command: [ "start-dev" ]
+    container_name: keycloak-extranet
+    command:
+      - start-dev
+      # - --import-realm # garde-le UNIQUEMENT pour le 1er démarrage
     environment:
       KEYCLOAK_ADMIN: admin
       KEYCLOAK_ADMIN_PASSWORD: admin
@@ -43,23 +45,11 @@ services:
       db:
         condition: service_healthy
     environment:
-      BACKUP_INTERVAL_SECONDS: "3600"
+      BACKUP_INTERVAL_SECONDS: "300"
       PGPASSWORD: keycloak
     volumes:
       - ./backup:/backup
-    entrypoint: ["/bin/bash","-lc"]
-    command: >
-      set -e;
-      echo "*:*:*:keycloak:keycloak" > /root/.pgpass;
-      chmod 600 /root/.pgpass;
-      while true; do
-        ts=$(date +%F_%H-%M-%S);
-        pg_dump -h db -U keycloak keycloak > /backup/keycloak_latest.sql;
-        pg_dump -h db -U keycloak keycloak | gzip > /backup/keycloak_latest.sql.gz;
-        pg_dump -h db -U keycloak keycloak | gzip > /backup/keycloak_${ts}.sql.gz;
-        echo "${ts}" > /backup/last_backup.txt;
-        sleep ${BACKUP_INTERVAL_SECONDS:-3600};
-      done
+    entrypoint: ["/bin/bash", "-lc", "bash /backup/run-db-backup.sh"]
     restart: unless-stopped
 
   seed-sync:
@@ -69,21 +59,12 @@ services:
       - db-backup
     volumes:
       - ./backup:/backup
-    entrypoint: ["/bin/sh","-lc"]
-    command: >
-      set -eu;
-      mkdir -p /backup/seed;
-      while true; do
-        if [ -f /backup/keycloak_latest.sql.gz ]; then
-          if [ ! -f /backup/seed/keycloak_seed.sql.gz ] ||
-             [ /backup/keycloak_latest.sql.gz -nt /backup/seed/keycloak_seed.sql.gz ]; then
-            cp -f /backup/keycloak_latest.sql.gz /backup/seed/keycloak_seed.sql.gz;
-            echo "seed updated at $(date +%F_%T)" > /backup/seed/.last_seed_sync.txt;
-          fi
-        fi
-        sleep 60;
-      done
+    entrypoint: ["/bin/sh", "-lc", "sh /backup/run-seed-sync.sh"]
     restart: unless-stopped
 
 volumes:
   kc_db:
+
+
+
+
