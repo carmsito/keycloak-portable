@@ -1,0 +1,34 @@
+name: Auto-publish Keycloak seed
+
+on:
+  schedule:
+    - cron: "0 * * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  refresh-seed:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - run: docker compose up -d
+      - run: sleep 20
+
+      - name: Commit seed if changed
+        run: |
+          if ! git diff --quiet -- backup/seed/keycloak_seed.sql.gz; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add backup/seed/keycloak_seed.sql.gz
+            git commit -m "chore(seed): auto-update ($(date -u +%F\ %T\ UTC))"
+            git push
+          else
+            echo "No seed changes."
+          fi
+
+      - run: docker compose down -v

@@ -27,31 +27,31 @@ done
 bootstrap_git() {
   local repo_url="https://carmsi_docker:${GITHUB_TOKEN}@github.com/${REPO_SLUG}"
   mkdir -p "$WORKDIR"
-  
-  # Always reinit git to ensure clean state
-  rm -rf "$WORKDIR/.git"
-  git -C "$WORKDIR" init
   git config --global --add safe.directory "$WORKDIR"
-  git -C "$WORKDIR" config user.name "carmsi_docker"
-  git -C "$WORKDIR" config user.email "carmsi_docker@localhost"
-  
-  # Add remote
-  git -C "$WORKDIR" remote add origin "$repo_url" 2>/dev/null || \
-  git -C "$WORKDIR" remote set-url origin "$repo_url"
 
-  # Track all files
-  git -C "$WORKDIR" add -f .everbloo.ico .gitattributes .github/workflows/auto-seed.yml \
-    .gitignore README.md docker-compose.yml realm/extranet-pp-realm.json \
-    start-docker.exe start-docker.ps1 backup/seed/keycloak_seed.sql.gz 2>/dev/null || true
+  if [ ! -d "$WORKDIR/.git" ]; then
+    git -C "$WORKDIR" init
+    git -C "$WORKDIR" config user.name  "carmsi_docker"
+    git -C "$WORKDIR" config user.email "carmsi_docker@localhost"
+    git -C "$WORKDIR" remote add origin "$repo_url" 2>/dev/null || \
+    git -C "$WORKDIR" remote set-url origin "$repo_url"
 
-  # Setup branch
-  if git ls-remote --exit-code --heads "$repo_url" "$BRANCH" >/dev/null 2>&1; then
-    git -C "$WORKDIR" fetch origin "$BRANCH"
-    git -C "$WORKDIR" reset --hard "origin/$BRANCH" || true
+    if git ls-remote --exit-code --heads "$repo_url" "$BRANCH" >/dev/null 2>&1; then
+      git -C "$WORKDIR" fetch origin "$BRANCH"
+      git -C "$WORKDIR" checkout -B "$BRANCH" "origin/$BRANCH"
+    else
+      git -C "$WORKDIR" checkout -B "$BRANCH"
+      git -C "$WORKDIR" commit --allow-empty -m "init backup repo" >/dev/null 2>&1 || true
+      git -C "$WORKDIR" push -u origin "$BRANCH" >/dev/null 2>&1 || true
+    fi
   else
-    git -C "$WORKDIR" checkout -B "$BRANCH"
-    git -C "$WORKDIR" commit --allow-empty -m "init backup repo" >/dev/null 2>&1 || true
-    git -C "$WORKDIR" push -u origin "$BRANCH" >/dev/null 2>&1 || true
+    local repo_url_current
+    repo_url_current="$(git -C "$WORKDIR" remote get-url origin 2>/dev/null || echo "")"
+    local repo_url_expected="$repo_url"
+    if [[ "$repo_url_current" != "$repo_url_expected" ]]; then
+      git -C "$WORKDIR" remote set-url origin "$repo_url_expected"
+    fi
+    git -C "$WORKDIR" fetch origin "$BRANCH" >/dev/null 2>&1 || true
   fi
 }
 
@@ -59,15 +59,10 @@ bootstrap_git() {
 backup_and_push() {
   ts="$(date +%F_%H-%M-%S)"
 
-  # Reset any untracked changes
-  git -C "$WORKDIR" reset --hard HEAD || true
-  git -C "$WORKDIR" clean -fd || true
+  # Pull first to get latest changes
+  git -C "$WORKDIR" pull --rebase origin "$BRANCH" || true
 
-  # Pull latest changes
-  git -C "$WORKDIR" fetch origin "$BRANCH"
-  git -C "$WORKDIR" reset --hard "origin/$BRANCH" || true
-
-  # Create backup
+  # Then create backup
   mkdir -p "$WORKDIR/backup/seed"
   pg_dump -h db -U keycloak keycloak | gzip -c > "$SEED_FILE"
   echo "backup done at $ts"
