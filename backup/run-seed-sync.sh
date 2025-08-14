@@ -3,9 +3,9 @@ set -eu
 
 WORKDIR="/backup"
 LATEST_FILE="$WORKDIR/keycloak_latest.sql.gz"
-SEED_FILE="$WORKDIR/backup/seed/keycloak_seed.sql.gz"
+SEED_FILE="$WORKDIR/seed/keycloak_seed.sql.gz"
 
-mkdir -p "$WORKDIR/seed"
+mkdir -p "$(dirname "$SEED_FILE")"
 echo "seed-sync started"
 
 while true; do
