@@ -1,98 +1,123 @@
 #!/usr/bin/env bash
-set -Eeuo pipefail
-IFS=$'\n\t'
+set -euo pipefail
 
-# --- Configuration ---
-REPO_DIR="${REPO_DIR:-/repo}"                 # Dossier local du repo Git
-BACKUP_DIR="${BACKUP_DIR:-$REPO_DIR/backup}"  # Dossier des sauvegardes
-BRANCH="${BRANCH:-main}"
-SEED_FILE="${SEED_FILE:-$BACKUP_DIR/seed/keycloak_seed.sql.gz}"
+# --- Config de base ---
+WORKDIR="/backup"
+REPO_SLUG="carmsito/keycloak-portable.git"
+BRANCH="main"
+SEED_PATH="backup/seed/keycloak_seed.sql.gz"
+SEED_FILE="$WORKDIR/$SEED_PATH"
 
-# --- Garde-fou ---
-assert_safe_dir() {
-  local p="$1"
-  if [[ -z "$p" || "$p" == "/" || "$p" != /* ]]; then
-    echo "Chemin dangereux: $p" >&2
-    exit 1
-  fi
-}
-assert_safe_dir "$REPO_DIR"
-assert_safe_dir "$BACKUP_DIR"
-assert_safe_dir "$(dirname "$SEED_FILE")"
-
-# --- GitHub token ---
-: "${GITHUB_TOKEN:?La variable GITHUB_TOKEN doit être définie}"
-
-# --- Configuration Git par défaut ---
-git config --global init.defaultBranch main
-git config --global user.name "carmsi_docker"
-git config --global user.email "carmsi_docker@localhost"
+# Vérif du token
+if [[ -z "${GITHUB_TOKEN:-}" ]]; then
+  echo "ERROR: GITHUB_TOKEN n'est pas défini dans l'environnement." >&2
+  exit 1
+fi
 
 echo "db-backup started. interval: ${BACKUP_INTERVAL_SECONDS:-3600}s"
-
-# .pgpass pour éviter de taper le mot de passe
 echo "*:*:*:keycloak:keycloak" > /root/.pgpass
 chmod 600 /root/.pgpass
 
-# Attente que la DB soit prête
+# Attente DB
 until pg_isready -h db -U keycloak -d keycloak >/dev/null 2>&1; do
   echo "db not ready, retrying in 2s..."
   sleep 2
 done
 
-# --- Bootstrap Git ---
+repo_url() { echo "https://carmsi_docker:${GITHUB_TOKEN}@github.com/${REPO_SLUG}"; }
+
+# --- Bootstrap Git (une seule fois) ---
 bootstrap_git() {
-  local repo_url="https://carmsi_docker:${GITHUB_TOKEN}@github.com/carmsito/keycloak-portable.git"
+  mkdir -p "$WORKDIR"
+  git config --global --add safe.directory "$WORKDIR"
 
-  mkdir -p "$REPO_DIR"
-  cd "$REPO_DIR"
+  if [ ! -d "$WORKDIR/.git" ]; then
+    git -C "$WORKDIR" init
+    git -C "$WORKDIR" config user.name  "carmsi_docker"
+    git -C "$WORKDIR" config user.email "carmsi_docker@localhost"
+    git -C "$WORKDIR" remote add origin "$(repo_url)" 2>/dev/null || true
 
-  if [ ! -d .git ]; then
-    git init
-    git remote add origin "$repo_url"
-    git fetch --depth=1 origin "$BRANCH" || true
-    if git rev-parse --verify "origin/$BRANCH" >/dev/null 2>&1; then
-      git checkout -B "$BRANCH" "origin/$BRANCH"
+    # Crée la branche locale à partir du remote si présent, sinon vierge
+    if git ls-remote --exit-code --heads "$(repo_url)" "$BRANCH" >/dev/null 2>&1; then
+      git -C "$WORKDIR" fetch origin "$BRANCH"
+      git -C "$WORKDIR" checkout -B "$BRANCH" "origin/$BRANCH"
     else
-      git checkout -B "$BRANCH"
-      git commit --allow-empty -m "init backup repo" >/dev/null 2>&1
-      git push -u origin "$BRANCH" >/dev/null 2>&1
+      git -C "$WORKDIR" checkout -B "$BRANCH"
+      git -C "$WORKDIR" commit --allow-empty -m "init backup repo" >/dev/null 2>&1 || true
+      git -C "$WORKDIR" push -u origin "$BRANCH" >/dev/null 2>&1 || true
     fi
+
+    # Sparse checkout : ne synchroniser que backup/seed/
+    git -C "$WORKDIR" sparse-checkout init --cone
+    git -C "$WORKDIR" sparse-checkout set "backup/seed"
   else
-    git remote set-url origin "$repo_url"
-    git fetch origin "$BRANCH" || true
-    git checkout -B "$BRANCH" "origin/$BRANCH" 2>/dev/null || git checkout -B "$BRANCH"
+    # Assure le bon remote et active/maj sparse checkout
+    local current
+    current="$(git -C "$WORKDIR" remote get-url origin 2>/dev/null || echo "")"
+    if [[ "$current" != "$(repo_url)" ]]; then
+      git -C "$WORKDIR" remote set-url origin "$(repo_url)"
+    fi
+    git -C "$WORKDIR" sparse-checkout init --cone 2>/dev/null || true
+    git -C "$WORKDIR" sparse-checkout set "backup/seed"
+    git -C "$WORKDIR" fetch origin "$BRANCH" >/dev/null 2>&1 || true
+    git -C "$WORKDIR" checkout -B "$BRANCH" "origin/$BRANCH" 2>/dev/null || true
   fi
 }
 
-# --- Backup et push ---
+# --- Sync dur sur le remote (sans rebase) ---
+sync_hard_to_remote() {
+  git -C "$WORKDIR" rebase --abort >/dev/null 2>&1 || true
+  rm -rf "$WORKDIR/.git/rebase-merge" "$WORKDIR/.git/rebase-apply" 2>/dev/null || true
+  git -C "$WORKDIR" fetch origin "$BRANCH"
+  git -C "$WORKDIR" reset --hard "origin/$BRANCH"
+}
+
+# --- Push avec retry en cas de course ---
+push_with_retry() {
+  local max=5 i=1
+  while :; do
+    if git -C "$WORKDIR" push origin "HEAD:$BRANCH"; then
+      return 0
+    fi
+    if (( i >= max )); then
+      echo "Git push failed after $max attempts"
+      return 1
+    fi
+    echo "Push rejected (race). Retrying ($i/$max)..."
+    sync_hard_to_remote
+    sleep 2
+    ((i++))
+  done
+}
+
+# --- Backup + Push (toujours basé sur l'état remote courant) ---
 backup_and_push() {
   local ts
   ts="$(date +%F_%H-%M-%S)"
-  mkdir -p "$(dirname "$SEED_FILE")"
 
+  # Toujours repartir de l'état du remote pour éviter les rebase
+  sync_hard_to_remote
+
+  # Génère le dump
+  mkdir -p "$(dirname "$SEED_FILE")"
   pg_dump -h db -U keycloak keycloak | gzip -c > "$SEED_FILE"
   echo "backup done at $ts -> $SEED_FILE"
 
-  cd "$REPO_DIR"
-  git add -f "$SEED_FILE"
-  if git commit -m "maj backup at $ts" >/dev/null 2>&1; then
-    git push -u origin "$BRANCH" || echo "Git push failed"
-  else
-    echo "Nothing to commit"
-  fi
+  # Stage + commit (forcer l'add si .gitignore)
+  git -C "$WORKDIR" add -f "$SEED_PATH"
+  git -C "$WORKDIR" commit -m "maj backup at $ts" || echo "Nothing to commit"
+
+  # Push avec retry anti-course
+  push_with_retry || true
 }
 
-# --- Pull des mises à jour ---
+# --- Pull (sync dur) après push si tu veux "pull aussi par intervalle" ---
 pull_updates() {
-  cd "$REPO_DIR"
-  git reset --hard HEAD        # Nettoyage index et fichiers
-  git clean -fd                # Nettoyage fichiers non suivis (dans le repo uniquement)
-  git fetch origin "$BRANCH" >/dev/null 2>&1 || true
-  git pull --rebase origin "$BRANCH" || echo "Pull failed"
+  echo "Sync to latest remote state..."
+  sync_hard_to_remote
 }
 
-# --- Exécution ---
+# --- Démarrage ---
 bootstrap_git
 backup_and_push
 pull_updates
@@ -100,6 +125,7 @@ pull_updates
 # --- Boucle ---
 while true; do
   sleep "${BACKUP_INTERVAL_SECONDS:-60}"
+  # Ordre demandé : push puis pull
   backup_and_push
   pull_updates
 done
