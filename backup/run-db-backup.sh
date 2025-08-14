@@ -63,14 +63,18 @@ backup_and_push() {
   pg_dump -h db -U keycloak keycloak | gzip -c > "$SEED_FILE"
   echo "backup done at $ts"
 
+  # If there are unstaged changes, discard them before syncing
+  if [[ -n "$(git -C "$WORKDIR" status --porcelain)" ]]; then
+    echo "Uncommitted changes detected, discarding them..."
+    git -C "$WORKDIR" restore .
+  fi
+
+  git -C "$WORKDIR" pull --rebase origin "$BRANCH" || true
+
   git -C "$WORKDIR" add -f "backup/seed/keycloak_seed.sql.gz" || true
   git -C "$WORKDIR" commit -m "maj backup at $ts" || echo "Nothing to commit"
 
-  if ! git -C "$WORKDIR" push -u origin "$BRANCH"; then
-    echo "Git push failed (retrying after pull --rebase)..."
-    git -C "$WORKDIR" pull --rebase origin "$BRANCH" || true
-    git -C "$WORKDIR" push -u origin "$BRANCH" || echo "Git push failed again"
-  fi
+  git -C "$WORKDIR" push -u origin "$BRANCH" || echo "Git push failed"
 }
 
 # --- Pull des mises à jour ---
