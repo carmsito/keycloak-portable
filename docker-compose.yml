@@ -45,7 +45,7 @@
       db:
         condition: service_healthy
     environment:
-      BACKUP_INTERVAL_SECONDS: "300"  # 5 minutes interval for more stable backups
+      BACKUP_INTERVAL_SECONDS: "61"  # 61 seconds interval for more stable backups
       PGPASSWORD: keycloak
       GITHUB_TOKEN: ${GITHUB_TOKEN}
     volumes:
