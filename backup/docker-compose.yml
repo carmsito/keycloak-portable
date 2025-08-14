@@ -1,0 +1,67 @@
+﻿services:
+  db:
+    image: postgres:16
+    container_name: keycloak-db-extranet
+    environment:
+      POSTGRES_DB: keycloak
+      POSTGRES_USER: keycloak
+      POSTGRES_PASSWORD: keycloak
+    volumes:
+      - kc_db:/var/lib/postgresql/data
+      - ./backup/seed:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U keycloak -d keycloak"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:25.0
+    container_name: keycloak-extranet
+    command:
+      - start-dev
+      # - --import-realm # garde-le UNIQUEMENT pour le 1er démarrage
+    environment:
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://db:5432/keycloak
+      KC_DB_USERNAME: keycloak
+      KC_DB_PASSWORD: keycloak
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./realm:/opt/keycloak/data/import
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  db-backup:
+    image: postgres:16
+    container_name: keycloak-db-backup
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      BACKUP_INTERVAL_SECONDS: "60"
+      PGPASSWORD: keycloak
+      GITHUB_TOKEN: ${GITHUB_TOKEN}
+    volumes:
+      - ./backup:/backup
+    entrypoint: ["/bin/bash", "-lc", "apt-get update && apt-get install -y git && bash /backup/run-db-backup.sh"]
+    restart: unless-stopped
+
+  seed-sync:
+    image: alpine:3.20
+    container_name: keycloak-seed-sync
+    depends_on:
+      - db-backup
+    volumes:
+      - ./backup:/backup
+    entrypoint: ["/bin/sh", "-lc", "sh /backup/run-seed-sync.sh"]
+    restart: unless-stopped
+
+volumes:
+  kc_db:

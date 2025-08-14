@@ -1,0 +1,69 @@
+{
+  "realm": "extranet-pp",
+  "enabled": true,
+  "registrationAllowed": false,
+  "loginWithEmailAllowed": true,
+  "clients": [
+    {
+      "clientId": "api-extranet-pp",
+      "name": "API Extranet (local)",
+      "protocol": "openid-connect",
+      "publicClient": true,
+      "directAccessGrantsEnabled": true,
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "serviceAccountsEnabled": false,
+      "redirectUris": [
+        "http://localhost:8080/*",
+        "http://localhost:8082/*",
+        "http://localhost:3000/*",
+        "http://localhost:3001/*"
+      ],
+      "webOrigins": ["+"]
+    },
+    {
+      "clientId": "front-extranet",
+      "name": "Front Extranet (local)",
+      "protocol": "openid-connect",
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "redirectUris": ["http://localhost:3000/*", "http://localhost:3001/*"],
+      "webOrigins": ["+"],
+      "attributes": {
+        "pkce.code.challenge.method": "S256"
+      }
+    }
+  ],
+  "roles": {
+    "realm": [
+      {
+        "name": "user",
+        "composite": false,
+        "clientRole": false,
+        "containerId": "extranet-pp"
+      }
+    ],
+    "client": {
+      "api-extranet-pp": [{ "name": "user" }]
+    }
+  },
+  "users": [
+    {
+      "username": "dev",
+      "firstName": "Dev",
+      "lastName": "Local",
+      "email": "dev@local",
+      "emailVerified": true,
+      "enabled": true,
+      "requiredActions": [],
+      "credentials": [
+        { "type": "password", "value": "Dev12345!", "temporary": false }
+      ],
+      "realmRoles": ["user"],
+      "clientRoles": { "api-extranet-pp": ["user"] }
+    }
+  ]
+}

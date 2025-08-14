@@ -1,14 +1,3 @@
-*.sql
-*.sql.gz
-last_backup.txt
-seed/.last_seed_sync.txt
-!seed/keycloak_seed.sql.gz
-start-project.ps1
+.env
+.env
 
-# Ignorer tout par défaut
-*
-
-# Sauf le dossier backup/seed et le fichier seed .gz
-!/backup/
-!/backup/seed/
-!/backup/seed/keycloak_seed.sql.gz
