@@ -45,7 +45,7 @@
       db:
         condition: service_healthy
     environment:
-      BACKUP_INTERVAL_SECONDS: "60"
+      BACKUP_INTERVAL_SECONDS: "300"  # 5 minutes interval for more stable backups
       PGPASSWORD: keycloak
       GITHUB_TOKEN: ${GITHUB_TOKEN}
     volumes:
@@ -57,7 +57,8 @@
     image: alpine:3.20
     container_name: keycloak-seed-sync
     depends_on:
-      - db-backup
+      db:
+        condition: service_healthy
     volumes:
       - ./backup:/backup
     entrypoint: ["/bin/sh", "-lc", "sh /backup/run-seed-sync.sh"]
