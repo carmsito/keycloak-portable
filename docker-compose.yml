@@ -45,11 +45,12 @@
       db:
         condition: service_healthy
     environment:
-      BACKUP_INTERVAL_SECONDS: "300"
+      BACKUP_INTERVAL_SECONDS: "60"
       PGPASSWORD: keycloak
+      GITHUB_TOKEN: ${GITHUB_TOKEN}
     volumes:
       - ./backup:/backup
-    entrypoint: ["/bin/bash", "-lc", "bash /backup/run-db-backup.sh"]
+    entrypoint: ["/bin/bash", "-lc", "apt-get update && apt-get install -y git && bash /backup/run-db-backup.sh"]
     restart: unless-stopped
 
   seed-sync:
@@ -64,7 +65,3 @@
 
 volumes:
   kc_db:
-
-
-
-
